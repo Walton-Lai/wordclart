@@ -210,7 +210,10 @@ export default function App() {
 
           case "word_feedback": {
             const { success, reason, word } = payload;
-            const text = success ? `NICE ONE. "${word}"` : `❌ ${reason}`;
+            let text = success ? `NICE ONE. "${word}"` : `❌ ${reason}`;
+            if (success && word === "WALTON") {
+              text = "GOOD BOY!";
+            }
             setFeedback({ id: Math.random().toString(), text, isSuccess: success });
             if (success) {
               audio.playSuccess();
