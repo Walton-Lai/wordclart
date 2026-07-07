@@ -5,7 +5,6 @@
 
 import { WebSocketServer, WebSocket } from "ws";
 import { fallbackWords } from "../src/dictionary";
-import { Redis } from "@upstash/redis";
 import crypto from "crypto";
 import express from "express";
 import { createServer } from "http";
@@ -105,61 +104,9 @@ interface Lobby {
 const lobbies = new Map<string, Lobby>();
 const clientLobbies = new Map<WebSocket, { lobbyId: string; playerId: string }>();
 
-// Upstash Redis setup with graceful local fallback if environment variables are not set or invalid
-let redis: Redis | null = null;
-
-let redisUrl = (process.env.UPSTASH_REDIS_REST_URL || "").trim();
-let redisToken = (process.env.UPSTASH_REDIS_REST_TOKEN || "").trim();
-
-// Check if they are swapped (URL should start with http/https, whereas token doesn't)
-if (redisUrl && redisToken) {
-  if (!redisUrl.startsWith("http") && redisToken.startsWith("http")) {
-    console.log("Upstash Redis configuration detected as swapped. Swapping URL and Token.");
-    const temp = redisUrl;
-    redisUrl = redisToken;
-    redisToken = temp;
-  }
-}
-
-const isValidRedisUrl = redisUrl.startsWith("https://") || redisUrl.startsWith("http://");
-
-if (isValidRedisUrl && redisToken) {
-  try {
-    redis = new Redis({
-      url: redisUrl,
-      token: redisToken,
-    });
-    console.log("Upstash Redis initialized successfully.");
-  } catch (err: any) {
-    console.warn("Upstash Redis initialization failed with error. Falling back to in-memory:", err?.message || err);
-    redis = null;
-  }
-} else {
-  if (process.env.UPSTASH_REDIS_REST_URL || process.env.UPSTASH_REDIS_REST_TOKEN) {
-    console.warn("Upstash Redis credentials are set but invalid (URL must start with http/https). Falling back to local in-memory state.");
-  } else {
-    console.log("Upstash Redis not configured. Using local in-memory state.");
-  }
-}
-
 async function getLobby(id: string, useCacheOnly: boolean = false): Promise<Lobby | undefined> {
   const normalizedId = id.toUpperCase();
-  let lobby: Lobby | undefined;
-  if (redis && !useCacheOnly) {
-    try {
-      lobby = (await redis.get<Lobby>(`lobby:${normalizedId}`)) || undefined;
-      if (lobby) {
-        // Synchronize with local memory cache
-        lobbies.set(normalizedId, lobby);
-      }
-    } catch (err) {
-      console.error(`Redis error getLobby ${normalizedId}:`, err);
-    }
-  }
-  
-  if (!lobby) {
-    lobby = lobbies.get(normalizedId);
-  }
+  const lobby = lobbies.get(normalizedId);
 
   // If active, dynamically calculate turnTimerRemaining based on actual system clock
   if (lobby && lobby.status === "active" && lobby.turnExpiresAt) {
@@ -172,43 +119,14 @@ async function getLobby(id: string, useCacheOnly: boolean = false): Promise<Lobb
 async function setLobby(id: string, lobby: Lobby): Promise<void> {
   const normalizedId = id.toUpperCase();
   lobbies.set(normalizedId, lobby);
-  if (redis) {
-    try {
-      // Auto-expire lobbies after 1 hour of inactivity to keep Redis database clean
-      await redis.set(`lobby:${normalizedId}`, lobby, { ex: 3600 });
-    } catch (err) {
-      console.error(`Redis error setLobby ${normalizedId}:`, err);
-    }
-  }
 }
 
 async function deleteLobby(id: string): Promise<void> {
   const normalizedId = id.toUpperCase();
-  if (redis) {
-    try {
-      await redis.del(`lobby:${normalizedId}`);
-    } catch (err) {
-      console.error(`Redis error deleteLobby ${normalizedId}:`, err);
-    }
-  }
   lobbies.delete(normalizedId);
 }
 
 async function findWaitingPublicLobby(): Promise<Lobby | undefined> {
-  if (redis) {
-    try {
-      const keys = await redis.keys("lobby:*");
-      for (const key of keys) {
-        const lobby = await redis.get<Lobby>(key);
-        if (lobby && !lobby.isPrivate && !lobby.isSolo && lobby.status === "waiting" && lobby.players.length < 2) {
-          return lobby;
-        }
-      }
-      return undefined;
-    } catch (err) {
-      console.error("Redis error findWaitingPublicLobby:", err);
-    }
-  }
   return Array.from(lobbies.values()).find(
     l => !l.isPrivate && !l.isSolo && l.status === "waiting" && l.players.length < 2
   );
@@ -931,7 +849,11 @@ httpServer.on("upgrade", (req, socket, head) => {
   }
 });
 
-// API health endpoint
+// Dedicated health endpoints
+app.get("/healthz", (req, res) => {
+  res.send("OK");
+});
+
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", message: "Wordclart API running." });
 });
@@ -960,8 +882,12 @@ async function startServer() {
     console.log(`Serving static files from ${distPath}`);
   }
 
-  httpServer.listen(3000, "0.0.0.0", () => {
-    console.log("Server listening on http://0.0.0.0:3000");
+  // Bind to port 3000 in dev to respect the hardcoded AI Studio container ingress,
+  // but use the dynamic process.env.PORT in production (Render/Glitch) to adapt correctly.
+  const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+
+  httpServer.listen(PORT, "0.0.0.0", () => {
+    console.log(`Server listening on http://0.0.0.0:${PORT}`);
   });
 }
 
