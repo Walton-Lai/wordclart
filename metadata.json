@@ -1,0 +1,6 @@
+{
+  "name": "Wordclart",
+  "description": "A high-speed multiplayer word battle game inspired by word bomb mechanics.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

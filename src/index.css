@@ -1,0 +1,86 @@
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+}
+
+/* Base Body Layout Configuration */
+body {
+  min-height: 100vh;
+  min-height: 100dvh;
+  background-color: #131313;
+  color: #e5e2e1;
+  font-family: var(--font-sans);
+}
+
+/* Subtle Neo-Brutalist Grid Background Pattern */
+.bg-grid-pattern {
+  background-image: linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+                    linear-gradient(to bottom, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* Radial Dot-Grid Matrix Pattern */
+.dot-grid-bg {
+  background-image: radial-gradient(circle, rgba(255, 255, 255, 0.06) 1px, transparent 1px);
+  background-size: 20px 20px;
+}
+
+/* Neo-Brutalist Hard Offset Shadows */
+.neo-shadow {
+  box-shadow: 4px 4px 0px 0px #facc15;
+}
+
+.neo-shadow-white {
+  box-shadow: 4px 4px 0px 0px #e5e2e1;
+}
+
+.neo-shadow-error {
+  box-shadow: 4px 4px 0px 0px #ef4444;
+}
+
+/* Micro-interaction offsets on active push */
+.btn-neo-active:active {
+  transform: translate(2px, 2px);
+  box-shadow: none;
+}
+
+/* Keyframes for Anxiety Tension Pulse */
+@keyframes anxiety-heartbeat {
+  0%, 100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.4);
+  }
+  50% {
+    transform: scale(1.03);
+    box-shadow: 0 0 20px 10px rgba(239, 68, 68, 0.1);
+  }
+}
+
+.anxiety-flash-red {
+  animation: anxiety-heartbeat 0.8s infinite ease-in-out;
+  background-color: rgba(220, 38, 38, 0.2);
+  border-color: #ef4444;
+}
+
+/* Smooth fade transitions */
+.page-transition-enter {
+  opacity: 0;
+  transform: scale(0.97) translateY(10px);
+}
+
+.page-transition-enter-active {
+  opacity: 1;
+  transform: scale(1) translateY(0);
+  transition: opacity 350ms cubic-bezier(0.16, 1, 0.3, 1), transform 350ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+/* Hide default cursor on PC/pointing devices so we can render our custom crosshair cursor */
+@media (pointer: fine) {
+  html, body, button, input, select, textarea, a, label, [role="button"], .cursor-pointer {
+    cursor: none !important;
+  }
+}
+
