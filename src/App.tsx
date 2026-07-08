@@ -179,17 +179,26 @@ export default function App() {
         console.log("WS Payload:", payload);
 
         switch (payload.type) {
+          case "join_success": {
+            const { playerId: assignedId } = payload;
+            setPlayerId(assignedId);
+            localStorage.setItem("wordclart_player_id", assignedId);
+            break;
+          }
+
           case "lobby_update": {
             const updatedLobby = payload.lobby as LobbyState;
             setLobby(updatedLobby);
             
             // Auto match ourselves
             if (!playerId) {
+              const savedId = localStorage.getItem("wordclart_player_id");
               const matched = updatedLobby.players.find(
-                p => p.name === playerName || (p.isHost && updatedLobby.players.length === 1)
+                p => (savedId && p.id === savedId) || p.name.toLowerCase() === playerName.toLowerCase() || (p.isHost && updatedLobby.players.length === 1)
               );
               if (matched) {
                 setPlayerId(matched.id);
+                localStorage.setItem("wordclart_player_id", matched.id);
               }
             }
 
@@ -281,76 +290,11 @@ export default function App() {
         isPrivate,
         lobbyId: specificId || undefined,
         avatarSeed,
-        isSolo
+        isSolo,
+        playerId: localStorage.getItem("wordclart_player_id") || undefined
       }));
     });
   };
-
-  // Handle tab visibility change - forfeit and leave if they switch tabs / go inactive for more than 1 minute
-  useEffect(() => {
-    let timeoutId: NodeJS.Timeout | null = null;
-    let hiddenAt: number | null = null;
-
-    const handleLeave = () => {
-      if (lobby && socketRef.current) {
-        console.log("Forfeiting/leaving game due to tab switch or exit event");
-        if (socketRef.current.readyState === WebSocket.OPEN) {
-          socketRef.current.send(JSON.stringify({ type: "leave_lobby" }));
-          socketRef.current.close();
-        }
-        setLobby(null);
-        setPlayerId(null);
-        setInputText("");
-        setFeedback({
-          id: Math.random().toString(),
-          text: "⚠️ MATCH FORFEITED: You left the tab for more than 1 minute!",
-          isSuccess: false
-        });
-        audio.playError();
-      }
-    };
-
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === "hidden") {
-        if (!hiddenAt) {
-          hiddenAt = Date.now();
-        }
-        // Set a timer for 1 minute (60,000ms)
-        if (!timeoutId) {
-          timeoutId = setTimeout(() => {
-            handleLeave();
-          }, 60000);
-        }
-      } else if (document.visibilityState === "visible") {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-          timeoutId = null;
-        }
-        if (hiddenAt) {
-          const elapsed = Date.now() - hiddenAt;
-          hiddenAt = null;
-          if (elapsed >= 60000) {
-            handleLeave();
-          }
-        }
-      }
-    };
-
-    const handlePageHide = () => {
-      handleLeave();
-    };
-
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("pagehide", handlePageHide);
-    window.addEventListener("beforeunload", handlePageHide);
-
-    return () => {
-      if (timeoutId) clearTimeout(timeoutId);
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("pagehide", handlePageHide);
-      window.removeEventListener("beforeunload", handlePageHide);
-    };
-  }, [lobby, playerId]);
 
   const startBattle = () => {
     if (!lobby || !socketRef.current) return;
@@ -399,6 +343,7 @@ export default function App() {
 
   const leaveLobby = () => {
     audio.playClose();
+    localStorage.removeItem("wordclart_player_id");
     if (socketRef.current) {
       socketRef.current.send(JSON.stringify({ type: "leave_lobby" }));
       socketRef.current.close();
@@ -959,16 +904,6 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Forfeiture Warning Notification Banner */}
-                <div className="bg-red-950/40 border-[3px] border-red-600/70 p-4 flex items-start gap-3 rounded-none shadow-[4px_4px_0px_0px_rgba(220,38,38,0.2)]">
-                  <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5 animate-pulse" />
-                  <div>
-                    <span className="text-[10px] font-black uppercase tracking-widest text-red-400 block mb-0.5">⚠️ TAB FOCUS ENFORCED (1-MIN GRACE)</span>
-                    <p className="text-xs font-bold uppercase tracking-wide text-white leading-normal">
-                      Leaving this tab, switching apps, or going inactive for <span className="text-red-400 font-extrabold underline decoration-red-500 underline-offset-2">more than 1 minute</span> will forfeit the match and remove you from the lobby.
-                    </p>
-                  </div>
-                </div>
 
                 {/* Player Grid Bento (Image 3) - Dynamically support up to 5 players */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">

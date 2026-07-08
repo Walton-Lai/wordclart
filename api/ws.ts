@@ -105,6 +105,7 @@ interface Lobby {
 
 const lobbies = new Map<string, Lobby>();
 const clientLobbies = new Map<WebSocket, { lobbyId: string; playerId: string }>();
+const disconnectTimeouts = new Map<string, NodeJS.Timeout>();
 
 async function getLobby(id: string, useCacheOnly: boolean = false): Promise<Lobby | undefined> {
   const normalizedId = id.toUpperCase();
@@ -450,7 +451,7 @@ wss.on("connection", (ws) => {
 
       switch (message.type) {
         case "join_lobby": {
-          const { name, lobbyId, isPrivate, avatarSeed, isSolo } = message;
+          const { name, lobbyId, isPrivate, avatarSeed, isSolo, playerId: incomingPlayerId } = message;
           let lobby: Lobby | undefined;
 
           if (lobbyId) {
@@ -499,24 +500,42 @@ wss.on("connection", (ws) => {
           }
           const finalName = name.trim();
 
-          // Check if there is an existing disconnected player with the same name to reconnect
-          const existingPlayerIndex = lobby.players.findIndex(p => p.name.toLowerCase() === finalName.toLowerCase());
+          // Check if there is an existing player with the same name (case-insensitive)
+          const existingPlayer = lobby.players.find(p => p.name.toLowerCase() === finalName.toLowerCase());
           let playerId: string;
 
-          if (existingPlayerIndex !== -1) {
-            const player = lobby.players[existingPlayerIndex];
-            if (!player.isConnected) {
-              // Player was disconnected. Reconnect them!
-              player.isConnected = true;
-              playerId = player.id;
+          if (existingPlayer) {
+            const isSameUser = incomingPlayerId && incomingPlayerId === existingPlayer.id;
+
+            if (isSameUser) {
+              // Same user reconnecting! Clean up old socket connection
+              for (const [oldWs, info] of clientLobbies.entries()) {
+                if (info.lobbyId === lobby.id && info.playerId === existingPlayer.id && oldWs !== ws) {
+                  clientLobbies.delete(oldWs);
+                  try {
+                    oldWs.close();
+                  } catch (e) {}
+                }
+              }
+
+              // Cancel pending disconnect timeout if any
+              const timeoutKey = `${lobby.id}_${existingPlayer.id}`;
+              if (disconnectTimeouts.has(timeoutKey)) {
+                clearTimeout(disconnectTimeouts.get(timeoutKey)!);
+                disconnectTimeouts.delete(timeoutKey);
+              }
+
+              existingPlayer.isConnected = true;
+              playerId = existingPlayer.id;
               clientLobbies.set(ws, { lobbyId: lobby.id, playerId });
-              addLobbyLog(lobby, `${player.name} reconnected.`);
+              ws.send(JSON.stringify({ type: "join_success", playerId }));
+              addLobbyLog(lobby, `${existingPlayer.name} reconnected.`);
               await setLobby(lobby.id, lobby);
               broadcastLobbyState(lobby, wss);
               break;
             } else {
-              // Name already active in lobby
-              ws.send(JSON.stringify({ type: "error", message: `Name "${finalName}" is already active in this room!` }));
+              // Different user or new session trying to use the same name while it's taken
+              ws.send(JSON.stringify({ type: "error", message: `Name "${finalName}" is already taken in this room!` }));
               return;
             }
           }
@@ -548,6 +567,7 @@ wss.on("connection", (ws) => {
 
           lobby.players.push(newPlayer);
           clientLobbies.set(ws, { lobbyId: lobby.id, playerId });
+          ws.send(JSON.stringify({ type: "join_success", playerId }));
           if (lobby.isSolo) {
             addLobbyLog(lobby, `${newPlayer.name} entered SOLO ARENA.`);
             
@@ -869,6 +889,12 @@ wss.on("connection", (ws) => {
           if (info) {
             const lobby = await getLobby(info.lobbyId);
             if (lobby) {
+              // Cancel pending disconnect timeout if any
+              const timeoutKey = `${lobby.id}_${info.playerId}`;
+              if (disconnectTimeouts.has(timeoutKey)) {
+                clearTimeout(disconnectTimeouts.get(timeoutKey)!);
+                disconnectTimeouts.delete(timeoutKey);
+              }
               await removePlayerFromLobby(lobby, info.playerId, "left the lobby");
               broadcastLobbyState(lobby, wss);
             }
@@ -894,18 +920,24 @@ wss.on("connection", (ws) => {
           await setLobby(lobby.id, lobby);
           broadcastLobbyState(lobby, wss);
 
-          // Grace period: wait 60 seconds before kicking
-          setTimeout(async () => {
+          // Grace period: wait 4 seconds before kicking
+          const timeoutKey = `${lobby.id}_${player.id}`;
+          if (disconnectTimeouts.has(timeoutKey)) {
+            clearTimeout(disconnectTimeouts.get(timeoutKey)!);
+          }
+          const timeoutId = setTimeout(async () => {
+            disconnectTimeouts.delete(timeoutKey);
             const recheckLobby = await getLobby(info.lobbyId);
             if (recheckLobby) {
               const recheckPlayer = recheckLobby.players.find(p => p.id === info.playerId);
               if (recheckPlayer && !recheckPlayer.isConnected) {
                 // Connection grace period expired - remove fully
-                await removePlayerFromLobby(recheckLobby, info.playerId, "disconnected for too long");
+                await removePlayerFromLobby(recheckLobby, info.playerId, "disconnected");
                 broadcastLobbyState(recheckLobby, wss);
               }
             }
-          }, 60000);
+          }, 4000);
+          disconnectTimeouts.set(timeoutKey, timeoutId);
         }
       }
       clientLobbies.delete(ws);
