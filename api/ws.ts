@@ -98,7 +98,8 @@ interface Lobby {
   correctGuesses: number;
   currentRound: number;
   turnsPlayedInCurrentRound: number;
-  playedWordsDetail: { word: string; player: string; round: number; prompt?: string; success?: boolean }[];
+  turnNumber: number; // keeps increasing 1, 2, 3, etc. and doesn't reset across rounds
+  playedWordsDetail: { word: string; player: string; round: number; prompt?: string; success?: boolean; turnNumber?: number }[];
   turnExpiresAt?: number; // millisecond timestamp when the active turn expires
 }
 
@@ -232,6 +233,7 @@ function generatePrompt(length: number, exclude?: string): string {
 function transitionToNextTurn(lobby: Lobby, wss: WebSocketServer) {
   // 1. Mark that a turn has been taken
   lobby.turnsPlayedInCurrentRound++;
+  lobby.turnNumber++;
 
   // 2. Check if the round should advance.
   const alivePlayers = lobby.players.filter(p => p.lives > 0);
@@ -299,6 +301,7 @@ function broadcastLobbyState(lobby: Lobby, wss: WebSocketServer) {
       correctGuesses: lobby.correctGuesses,
       currentRound: lobby.currentRound,
       turnsPlayedInCurrentRound: lobby.turnsPlayedInCurrentRound,
+      turnNumber: lobby.turnNumber,
       playedWordsDetail: lobby.playedWordsDetail
     }
   });
@@ -366,6 +369,16 @@ setInterval(async () => {
               }
             }
 
+            // Record this turn in history
+            lobby.playedWordsDetail.push({
+              word: "TIMEOUT",
+              player: activePlayer.name,
+              round: lobby.currentRound,
+              prompt: lobby.prompt.toUpperCase(),
+              success: false,
+              turnNumber: lobby.turnNumber
+            });
+
             transitionToNextTurn(lobby, wss);
             await setLobby(lobby.id, lobby);
           }
@@ -421,6 +434,7 @@ wss.on("connection", (ws) => {
               winnerId: null,
               usedWords: [],
               playedWordsDetail: [],
+              turnNumber: 0,
               countdownValue: 3,
               logs: [],
               longestWord: null,
@@ -495,6 +509,7 @@ wss.on("connection", (ws) => {
                 freshLobby.activePlayerIndex = 0;
                 freshLobby.usedWords = [];
                 freshLobby.playedWordsDetail = [];
+                freshLobby.turnNumber = 1;
                 freshLobby.wordsPlayedCount = 0;
                 freshLobby.currentRound = 1;
                 freshLobby.turnsPlayedInCurrentRound = 0;
@@ -562,6 +577,7 @@ wss.on("connection", (ws) => {
               freshLobby.activePlayerIndex = 0;
               freshLobby.usedWords = [];
               freshLobby.playedWordsDetail = [];
+              freshLobby.turnNumber = 1;
               freshLobby.wordsPlayedCount = 0;
               freshLobby.currentRound = 1;
               freshLobby.turnsPlayedInCurrentRound = 0;
@@ -606,15 +622,6 @@ wss.on("connection", (ws) => {
 
           // Validation 1: Match prompt
           if (!cleanWord || !cleanWord.includes(prompt)) {
-            if (cleanWord) {
-              lobby.playedWordsDetail.push({
-                word: cleanWord.toUpperCase(),
-                player: activePlayer.name,
-                round: lobby.currentRound,
-                prompt: lobby.prompt.toUpperCase(),
-                success: false
-              });
-            }
             await setLobby(lobby.id, lobby);
             ws.send(JSON.stringify({ 
               type: "word_feedback", 
@@ -626,13 +633,6 @@ wss.on("connection", (ws) => {
 
           // Validation 2: Already used
           if (!isSpecialAllowedWord && lobby.usedWords.map(uw => uw.toLowerCase()).includes(cleanWord)) {
-            lobby.playedWordsDetail.push({
-              word: cleanWord.toUpperCase(),
-              player: activePlayer.name,
-              round: lobby.currentRound,
-              prompt: lobby.prompt.toUpperCase(),
-              success: false
-            });
             await setLobby(lobby.id, lobby);
             ws.send(JSON.stringify({ 
               type: "word_feedback", 
@@ -660,13 +660,6 @@ wss.on("connection", (ws) => {
           }
 
           if (!isValid) {
-            lobby.playedWordsDetail.push({
-              word: cleanWord.toUpperCase(),
-              player: activePlayer.name,
-              round: lobby.currentRound,
-              prompt: lobby.prompt.toUpperCase(),
-              success: false
-            });
             await setLobby(lobby.id, lobby);
             ws.send(JSON.stringify({ 
               type: "word_feedback", 
@@ -683,7 +676,8 @@ wss.on("connection", (ws) => {
             player: activePlayer.name,
             round: lobby.currentRound,
             prompt: lobby.prompt.toUpperCase(),
-            success: true
+            success: true,
+            turnNumber: lobby.turnNumber
           });
           addLobbyLog(lobby, `${activePlayer.name} typed: "${cleanWord.toUpperCase()}" (+ Accepted!)`);
 
@@ -716,6 +710,7 @@ wss.on("connection", (ws) => {
           lobby.winnerId = null;
           lobby.usedWords = [];
           lobby.playedWordsDetail = [];
+          lobby.turnNumber = 0;
           lobby.longestWord = null;
           lobby.wordsPlayedCount = 0;
           lobby.totalGuesses = 0;
@@ -758,6 +753,7 @@ wss.on("connection", (ws) => {
                 freshLobby.activePlayerIndex = 0;
                 freshLobby.usedWords = [];
                 freshLobby.playedWordsDetail = [];
+                freshLobby.turnNumber = 1;
                 freshLobby.wordsPlayedCount = 0;
                 freshLobby.currentRound = 1;
                 freshLobby.turnsPlayedInCurrentRound = 0;

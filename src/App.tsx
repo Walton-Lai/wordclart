@@ -1600,11 +1600,12 @@ function MatchWordHistory({ lobby }: MatchWordHistoryProps) {
   const [filterPlayer, setFilterPlayer] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
 
-  const rawWords: { word: string; player: string; round: number; prompt?: string; success?: boolean }[] = lobby.playedWordsDetail || lobby.usedWords.map((word) => ({
+  const rawWords: { word: string; player: string; round: number; prompt?: string; success?: boolean; turnNumber?: number }[] = lobby.playedWordsDetail || lobby.usedWords.map((word, index) => ({
     word: word,
     player: lobby.isSolo ? "Solo Player" : "Speller",
     round: 1,
     success: true,
+    turnNumber: index + 1,
   }));
 
   // Extract unique players list from played words
@@ -1619,7 +1620,11 @@ function MatchWordHistory({ lobby }: MatchWordHistoryProps) {
 
   // Sort
   if (sortBy === "length") {
-    processedWords = [...processedWords].sort((a, b) => b.word.length - a.word.length);
+    processedWords = [...processedWords].sort((a, b) => {
+      const lenA = a.word === "TIMEOUT" ? 0 : a.word.length;
+      const lenB = b.word === "TIMEOUT" ? 0 : b.word.length;
+      return lenB - lenA;
+    });
   } else if (sortBy === "alpha") {
     processedWords = [...processedWords].sort((a, b) => a.word.localeCompare(b.word));
   } // 'chrono' is default (already in order of entry)
@@ -1630,7 +1635,7 @@ function MatchWordHistory({ lobby }: MatchWordHistoryProps) {
         <div>
           <span className="text-[9px] font-black uppercase tracking-widest text-[#facc15] block mb-1">HISTORY</span>
           <h3 className="font-black text-lg text-white uppercase flex items-center gap-2">
-            📜 Words List ({rawWords.length})
+            📜 Turn-by-Turn History ({rawWords.length})
           </h3>
         </div>
         {/* Simple search bar with consistent sans-serif black-caps style */}
@@ -1725,21 +1730,28 @@ function MatchWordHistory({ lobby }: MatchWordHistoryProps) {
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2 max-h-[220px] overflow-y-auto pr-1.5 custom-scrollbar">
               {processedWords.map((item, index) => {
+                const isTimeout = item.word === "TIMEOUT";
                 const isWrong = item.success === false;
                 return (
                   <div
                     key={index}
                     className={`bg-black/50 border-2 px-3 py-2 flex items-center justify-between gap-3 text-xs font-mono text-white transition-all ${
-                      isWrong
+                      isTimeout
+                        ? "border-red-900/60 hover:border-red-700 bg-red-950/10"
+                        : isWrong
                         ? "border-red-950 hover:border-red-800"
                         : "border-gray-800 hover:border-gray-700"
                     }`}
                   >
                     <div className="flex flex-col gap-0.5">
                       <span className={`font-black font-sans uppercase tracking-wide text-sm leading-none ${
-                        isWrong ? "text-red-500 line-through decoration-red-700/50" : "text-[#facc15]"
+                        isTimeout 
+                          ? "text-red-400 tracking-wider font-bold animate-pulse" 
+                          : isWrong 
+                          ? "text-red-500 line-through decoration-red-700/50" 
+                          : "text-[#facc15]"
                       }`}>
-                        {item.word}
+                        {isTimeout ? "💥 TIMEOUT" : item.word}
                       </span>
                       <div className="flex flex-col gap-0.5 mt-0.5 text-[9px] text-gray-400 uppercase font-sans font-semibold">
                         <span>{item.player}</span>
@@ -1749,8 +1761,9 @@ function MatchWordHistory({ lobby }: MatchWordHistoryProps) {
                       </div>
                     </div>
                     <div className="flex flex-col items-end gap-0.5 text-[9px] text-gray-500 font-bold font-sans">
-                      <span>LENGTH: {item.word.length}</span>
+                      <span>TURN: {item.turnNumber || (index + 1)}</span>
                       <span>ROUND: {item.round}</span>
+                      <span>LENGTH: {isTimeout ? "-" : item.word.length}</span>
                     </div>
                   </div>
                 );

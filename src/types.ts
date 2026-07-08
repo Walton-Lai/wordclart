@@ -34,5 +34,6 @@ export interface LobbyState {
   correctGuesses: number;
   currentRound?: number;
   turnsPlayedInCurrentRound?: number;
-  playedWordsDetail?: { word: string; player: string; round: number; prompt?: string; success?: boolean }[];
+  turnNumber?: number;
+  playedWordsDetail?: { word: string; player: string; round: number; prompt?: string; success?: boolean; turnNumber?: number }[];
 }
