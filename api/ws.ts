@@ -499,8 +499,30 @@ wss.on("connection", (ws) => {
           }
           const finalName = name.trim();
 
+          // Check if there is an existing disconnected player with the same name to reconnect
+          const existingPlayerIndex = lobby.players.findIndex(p => p.name.toLowerCase() === finalName.toLowerCase());
+          let playerId: string;
+
+          if (existingPlayerIndex !== -1) {
+            const player = lobby.players[existingPlayerIndex];
+            if (!player.isConnected) {
+              // Player was disconnected. Reconnect them!
+              player.isConnected = true;
+              playerId = player.id;
+              clientLobbies.set(ws, { lobbyId: lobby.id, playerId });
+              addLobbyLog(lobby, `${player.name} reconnected.`);
+              await setLobby(lobby.id, lobby);
+              broadcastLobbyState(lobby, wss);
+              break;
+            } else {
+              // Name already active in lobby
+              ws.send(JSON.stringify({ type: "error", message: `Name "${finalName}" is already active in this room!` }));
+              return;
+            }
+          }
+
           // Create Player Profile
-          const playerId = "p_" + Math.random().toString(36).substr(2, 9);
+          playerId = "p_" + Math.random().toString(36).substr(2, 9);
           const newPlayer: Player = {
             id: playerId,
             name: finalName,
@@ -865,8 +887,26 @@ wss.on("connection", (ws) => {
     if (info) {
       const lobby = await getLobby(info.lobbyId);
       if (lobby) {
-        await removePlayerFromLobby(lobby, info.playerId, "disconnected");
-        broadcastLobbyState(lobby, wss);
+        const player = lobby.players.find(p => p.id === info.playerId);
+        if (player) {
+          player.isConnected = false;
+          addLobbyLog(lobby, `${player.name} disconnected.`);
+          await setLobby(lobby.id, lobby);
+          broadcastLobbyState(lobby, wss);
+
+          // Grace period: wait 60 seconds before kicking
+          setTimeout(async () => {
+            const recheckLobby = await getLobby(info.lobbyId);
+            if (recheckLobby) {
+              const recheckPlayer = recheckLobby.players.find(p => p.id === info.playerId);
+              if (recheckPlayer && !recheckPlayer.isConnected) {
+                // Connection grace period expired - remove fully
+                await removePlayerFromLobby(recheckLobby, info.playerId, "disconnected for too long");
+                broadcastLobbyState(recheckLobby, wss);
+              }
+            }
+          }, 60000);
+        }
       }
       clientLobbies.delete(ws);
     }

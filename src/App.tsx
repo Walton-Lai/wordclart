@@ -286,8 +286,11 @@ export default function App() {
     });
   };
 
-  // Handle tab visibility change - forfeit and leave if they switch tabs / go inactive
+  // Handle tab visibility change - forfeit and leave if they switch tabs / go inactive for more than 1 minute
   useEffect(() => {
+    let timeoutId: NodeJS.Timeout | null = null;
+    let hiddenAt: number | null = null;
+
     const handleLeave = () => {
       if (lobby && socketRef.current) {
         console.log("Forfeiting/leaving game due to tab switch or exit event");
@@ -300,7 +303,7 @@ export default function App() {
         setInputText("");
         setFeedback({
           id: Math.random().toString(),
-          text: "⚠️ MATCH FORFEITED: You left the tab or went inactive!",
+          text: "⚠️ MATCH FORFEITED: You left the tab for more than 1 minute!",
           isSuccess: false
         });
         audio.playError();
@@ -309,18 +312,43 @@ export default function App() {
 
     const handleVisibilityChange = () => {
       if (document.visibilityState === "hidden") {
-        handleLeave();
+        if (!hiddenAt) {
+          hiddenAt = Date.now();
+        }
+        // Set a timer for 1 minute (60,000ms)
+        if (!timeoutId) {
+          timeoutId = setTimeout(() => {
+            handleLeave();
+          }, 60000);
+        }
+      } else if (document.visibilityState === "visible") {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        if (hiddenAt) {
+          const elapsed = Date.now() - hiddenAt;
+          hiddenAt = null;
+          if (elapsed >= 60000) {
+            handleLeave();
+          }
+        }
       }
     };
 
+    const handlePageHide = () => {
+      handleLeave();
+    };
+
     document.addEventListener("visibilitychange", handleVisibilityChange);
-    window.addEventListener("pagehide", handleLeave);
-    window.addEventListener("beforeunload", handleLeave);
+    window.addEventListener("pagehide", handlePageHide);
+    window.addEventListener("beforeunload", handlePageHide);
 
     return () => {
+      if (timeoutId) clearTimeout(timeoutId);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
-      window.removeEventListener("pagehide", handleLeave);
-      window.removeEventListener("beforeunload", handleLeave);
+      window.removeEventListener("pagehide", handlePageHide);
+      window.removeEventListener("beforeunload", handlePageHide);
     };
   }, [lobby, playerId]);
 
@@ -935,9 +963,9 @@ export default function App() {
                 <div className="bg-red-950/40 border-[3px] border-red-600/70 p-4 flex items-start gap-3 rounded-none shadow-[4px_4px_0px_0px_rgba(220,38,38,0.2)]">
                   <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5 animate-pulse" />
                   <div>
-                    <span className="text-[10px] font-black uppercase tracking-widest text-red-400 block mb-0.5">⚠️ TAB FOCUS ENFORCED</span>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-red-400 block mb-0.5">⚠️ TAB FOCUS ENFORCED (1-MIN GRACE)</span>
                     <p className="text-xs font-bold uppercase tracking-wide text-white leading-normal">
-                      Leaving this tab, switching apps, or going inactive will immediately <span className="text-red-400 font-extrabold underline decoration-red-500 underline-offset-2">FORFEIT THE MATCH</span> and remove you from the lobby.
+                      Leaving this tab, switching apps, or going inactive for <span className="text-red-400 font-extrabold underline decoration-red-500 underline-offset-2">more than 1 minute</span> will forfeit the match and remove you from the lobby.
                     </p>
                   </div>
                 </div>
