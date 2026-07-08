@@ -286,6 +286,44 @@ export default function App() {
     });
   };
 
+  // Handle tab visibility change - forfeit and leave if they switch tabs / go inactive
+  useEffect(() => {
+    const handleLeave = () => {
+      if (lobby && socketRef.current) {
+        console.log("Forfeiting/leaving game due to tab switch or exit event");
+        if (socketRef.current.readyState === WebSocket.OPEN) {
+          socketRef.current.send(JSON.stringify({ type: "leave_lobby" }));
+          socketRef.current.close();
+        }
+        setLobby(null);
+        setPlayerId(null);
+        setInputText("");
+        setFeedback({
+          id: Math.random().toString(),
+          text: "⚠️ MATCH FORFEITED: You left the tab or went inactive!",
+          isSuccess: false
+        });
+        audio.playError();
+      }
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "hidden") {
+        handleLeave();
+      }
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    window.addEventListener("pagehide", handleLeave);
+    window.addEventListener("beforeunload", handleLeave);
+
+    return () => {
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      window.removeEventListener("pagehide", handleLeave);
+      window.removeEventListener("beforeunload", handleLeave);
+    };
+  }, [lobby, playerId]);
+
   const startBattle = () => {
     if (!lobby || !socketRef.current) return;
     audio.playSuccess();
@@ -624,7 +662,7 @@ export default function App() {
                         <Plus className="w-6 h-6 stroke-[3] text-black" />
                       </div>
                       <span className="font-black text-xl uppercase tracking-tight">PRIVATE ROOM</span>
-                      <span className="text-xs font-bold uppercase tracking-wider text-black/70">Challenge friends 1v1</span>
+                      <span className="text-xs font-bold uppercase tracking-wider text-black/70">Challenge friends (up to 5 players)</span>
                     </button>
                     {/* Hard offset yellow block */}
                     <div className="absolute inset-0 bg-white translate-x-2 translate-y-2 -z-10 rounded-none border-[3px] border-white" />
@@ -892,71 +930,62 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Player Grid Bento (Image 3) */}
-                <div className={`grid ${lobby.isSolo ? "grid-cols-1" : "grid-cols-1 md:grid-cols-2"} gap-4`}>
-                  
-                  {/* Player 1 Slot (Host) */}
-                  {lobby.players[0] ? (
-                    <div className="bg-[#1c1b1b] border-[3px] border-white p-4 flex items-center justify-between shadow-[4px_4px_0px_0px_white]">
+                {/* Forfeiture Warning Notification Banner */}
+                <div className="bg-red-950/40 border-[3px] border-red-600/70 p-4 flex items-start gap-3 rounded-none shadow-[4px_4px_0px_0px_rgba(220,38,38,0.2)]">
+                  <AlertCircle className="w-5 h-5 text-red-500 shrink-0 mt-0.5 animate-pulse" />
+                  <div>
+                    <span className="text-[10px] font-black uppercase tracking-widest text-red-400 block mb-0.5">⚠️ TAB FOCUS ENFORCED</span>
+                    <p className="text-xs font-bold uppercase tracking-wide text-white leading-normal">
+                      Leaving this tab, switching apps, or going inactive will immediately <span className="text-red-400 font-extrabold underline decoration-red-500 underline-offset-2">FORFEIT THE MATCH</span> and remove you from the lobby.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Player Grid Bento (Image 3) - Dynamically support up to 5 players */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                  {lobby.players.map((player, index) => (
+                    <div 
+                      key={player.id} 
+                      className="bg-[#1c1b1b] border-[3px] border-white p-4 flex items-center justify-between shadow-[4px_4px_0px_0px_white]"
+                    >
                       <div className="flex items-center gap-3.5">
-                        <div className={`w-12 h-12 border-[3px] border-white flex items-center justify-center font-black text-lg text-white ${getAvatarBg(lobby.players[0].avatarSeed)}`}>
-                          {lobby.players[0].name.substring(0, 1).toUpperCase()}
+                        <div className={`w-12 h-12 border-[3px] border-white flex items-center justify-center font-black text-lg text-white ${getAvatarBg(player.avatarSeed)}`}>
+                          {player.name.substring(0, 1).toUpperCase()}
                         </div>
                         <div>
                           <p className="font-black text-base text-white uppercase flex items-center gap-1.5 leading-tight">
-                            <span>{lobby.players[0].name}</span>
-                            {lobby.players[0].id === playerId && (
+                            <span>{player.name}</span>
+                            {player.id === playerId && (
                               <span className="text-[9px] bg-white text-black font-black px-1 py-0.2 rounded-none">YOU</span>
                             )}
                           </p>
-                          <span className="bg-[#facc15] text-black px-2 py-0.5 font-black text-[9px] uppercase tracking-wider inline-block mt-1">
-                            {lobby.isSolo ? "SOLO PLAYER" : "Host"}
+                          <span className={`${index === 0 ? 'bg-[#facc15] text-black' : 'bg-red-500 text-white'} px-2 py-0.5 font-black text-[9px] uppercase tracking-wider inline-block mt-1`}>
+                            {index === 0 ? (lobby.isSolo ? "SOLO PLAYER" : "HOST") : `PLAYER ${index + 1}`}
                           </span>
                         </div>
                       </div>
-                      <div className="w-8 h-8 rounded-none bg-[#facc15] border-2 border-white flex items-center justify-center">
-                        <Star className="w-4 h-4 text-black fill-black" />
+                      <div className="flex items-center gap-1.5">
+                        {index === 0 ? (
+                          <div className="w-8 h-8 rounded-none bg-[#facc15] border-2 border-white flex items-center justify-center">
+                            <Star className="w-4 h-4 text-black fill-black" />
+                          </div>
+                        ) : (
+                          <div className="w-3 h-3 bg-green-500 animate-ping rounded-none" />
+                        )}
                       </div>
                     </div>
-                  ) : (
-                    <div className="bg-[#1c1b1b] border-[3px] border-white border-dashed p-5 flex items-center justify-center text-gray-600 font-bold uppercase text-sm">
-                      SLOT VACANT
+                  ))}
+
+                  {/* Vacant slots to fill up if waiting and multiplayer */}
+                  {!lobby.isSolo && lobby.players.length < 2 && (
+                    <div className="bg-[#1c1b1b] border-[3px] border-white border-dashed p-4 flex flex-col justify-center items-center gap-2 min-h-[84px] relative">
+                      <div className="flex items-center gap-2">
+                        <div className="w-2.5 h-2.5 bg-yellow-400 rounded-none animate-bounce" />
+                        <span className="text-xs font-black text-gray-400 uppercase tracking-widest">CONNECTING...</span>
+                      </div>
+                      <span className="text-[10px] text-gray-500 uppercase font-bold text-center">WAITING FOR PLAYERS TO JOIN</span>
                     </div>
                   )}
-
-                  {/* Player 2 Slot (Only displayed in multiplayer battles) */}
-                  {!lobby.isSolo && (
-                    lobby.players[1] ? (
-                      <div className="bg-[#1c1b1b] border-[3px] border-white p-4 flex items-center justify-between shadow-[4px_4px_0px_0px_white]">
-                        <div className="flex items-center gap-3.5">
-                          <div className={`w-12 h-12 border-[3px] border-white flex items-center justify-center font-black text-lg text-white ${getAvatarBg(lobby.players[1].avatarSeed)}`}>
-                            {lobby.players[1].name.substring(0, 1).toUpperCase()}
-                          </div>
-                          <div>
-                            <p className="font-black text-base text-white uppercase flex items-center gap-1.5 leading-tight">
-                              <span>{lobby.players[1].name}</span>
-                              {lobby.players[1].id === playerId && (
-                                <span className="text-[9px] bg-white text-black font-black px-1 py-0.2 rounded-none">YOU</span>
-                              )}
-                            </p>
-                            <span className="bg-red-500 text-white px-2 py-0.5 font-black text-[9px] uppercase tracking-wider inline-block mt-1">
-                              OPPONENT
-                            </span>
-                          </div>
-                        </div>
-                        <div className="w-3 h-3 bg-green-500 animate-ping rounded-none" />
-                      </div>
-                    ) : (
-                      <div className="bg-[#1c1b1b] border-[3px] border-white border-dashed p-4 flex flex-col justify-center items-center gap-2 min-h-[84px] relative">
-                        <div className="flex items-center gap-2">
-                          <div className="w-2.5 h-2.5 bg-yellow-400 rounded-none animate-bounce" />
-                          <span className="text-xs font-black text-gray-400 uppercase tracking-widest">CONNECTING...</span>
-                        </div>
-                        <span className="text-[10px] text-gray-500 uppercase font-bold text-center">WAITING FOR OPPONENT TO JOIN</span>
-                      </div>
-                    )
-                  )}
-
                 </div>
 
                 {/* System Logs Console Console (Image 3) */}

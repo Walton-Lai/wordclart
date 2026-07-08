@@ -130,7 +130,7 @@ async function deleteLobby(id: string): Promise<void> {
 
 async function findWaitingPublicLobby(): Promise<Lobby | undefined> {
   return Array.from(lobbies.values()).find(
-    l => !l.isPrivate && !l.isSolo && l.status === "waiting" && l.players.length < 2
+    l => !l.isPrivate && !l.isSolo && l.status === "waiting" && l.players.length < 5
   );
 }
 
@@ -275,6 +275,50 @@ function transitionToNextTurn(lobby: Lobby, wss: WebSocketServer) {
 
   addLobbyLog(lobby, `👉 It is ${lobby.players[lobby.activePlayerIndex].name}'s turn! Time: ${(lobby.currentTurnDuration / 1000).toFixed(1)}s. Prompt: "${lobby.prompt}"`);
   broadcastLobbyState(lobby, wss);
+}
+
+async function removePlayerFromLobby(lobby: Lobby, playerId: string, reason: string): Promise<void> {
+  const index = lobby.players.findIndex(p => p.id === playerId);
+  if (index === -1) return;
+
+  const leftPlayer = lobby.players[index];
+  const leftPlayerName = leftPlayer.name;
+  
+  // Splice the player from the list
+  lobby.players.splice(index, 1);
+  addLobbyLog(lobby, `${leftPlayerName} ${reason}.`);
+
+  // Handle active game adjustments
+  if (lobby.status === "active") {
+    const alivePlayers = lobby.players.filter(p => p.lives > 0);
+    if (alivePlayers.length === 0 || (!lobby.isSolo && alivePlayers.length <= 1)) {
+      // Game over
+      lobby.status = "gameover";
+      lobby.winnerId = lobby.isSolo ? (lobby.players[0]?.id || null) : (alivePlayers[0]?.id || null);
+      addLobbyLog(lobby, `🏆 GAME OVER! ${lobby.isSolo ? (lobby.players[0]?.name || "Nobody") : (alivePlayers[0]?.name || "Nobody")} finished with score: ${lobby.wordsPlayedCount}!`);
+    } else {
+      // Adjust active player index
+      if (index === lobby.activePlayerIndex) {
+        // The active player left! Transition to the next turn immediately.
+        // Bumping index back so that transitionToNextTurn advances to the correct shifted slot.
+        lobby.activePlayerIndex = (lobby.activePlayerIndex - 1 + lobby.players.length) % lobby.players.length;
+        transitionToNextTurn(lobby, wss);
+      } else if (index < lobby.activePlayerIndex) {
+        // An earlier player was removed, shift index down to keep pointing to the same active player.
+        lobby.activePlayerIndex--;
+      }
+    }
+  }
+
+  // Promote next player to host if the old host left
+  if (lobby.players.length > 0) {
+    if (leftPlayer.isHost) {
+      lobby.players[0].isHost = true;
+    }
+    await setLobby(lobby.id, lobby);
+  } else {
+    await deleteLobby(lobby.id);
+  }
 }
 
 // Broadcaster helper
@@ -474,8 +518,8 @@ wss.on("connection", (ws) => {
               return;
             }
           } else {
-            if (lobby.players.length >= 2) {
-              ws.send(JSON.stringify({ type: "error", message: "Lobby is full! Max 2 players." }));
+            if (lobby.players.length >= 5) {
+              ws.send(JSON.stringify({ type: "error", message: "Lobby is full! Max 5 players." }));
               return;
             }
           }
@@ -529,7 +573,7 @@ wss.on("connection", (ws) => {
               }
             }, 1000);
           } else {
-            addLobbyLog(lobby, `${newPlayer.name} joined. [${lobby.players.length}/2]`);
+            addLobbyLog(lobby, `${newPlayer.name} joined. [${lobby.players.length}/5]`);
             await setLobby(lobby.id, lobby);
             broadcastLobbyState(lobby, wss);
           }
@@ -803,20 +847,7 @@ wss.on("connection", (ws) => {
           if (info) {
             const lobby = await getLobby(info.lobbyId);
             if (lobby) {
-              const index = lobby.players.findIndex(p => p.id === info.playerId);
-              if (index !== -1) {
-                const leftPlayerName = lobby.players[index].name;
-                lobby.players.splice(index, 1);
-                addLobbyLog(lobby, `${leftPlayerName} left the lobby.`);
-
-                // Promote next player to host
-                if (lobby.players.length > 0) {
-                  lobby.players[0].isHost = true;
-                  await setLobby(lobby.id, lobby);
-                } else {
-                  await deleteLobby(lobby.id);
-                }
-              }
+              await removePlayerFromLobby(lobby, info.playerId, "left the lobby");
               broadcastLobbyState(lobby, wss);
             }
             clientLobbies.delete(ws);
@@ -834,38 +865,7 @@ wss.on("connection", (ws) => {
     if (info) {
       const lobby = await getLobby(info.lobbyId);
       if (lobby) {
-        const player = lobby.players.find(p => p.id === info.playerId);
-        if (player) {
-          player.isConnected = false;
-          addLobbyLog(lobby, `${player.name} lost connection.`);
-          await setLobby(lobby.id, lobby);
-          
-          // For multiplayer robustness, if a player disconnects, we can give them some grace period.
-          setTimeout(async () => {
-            const recheckLobby = await getLobby(info.lobbyId);
-            if (recheckLobby) {
-              const recheckPlayer = recheckLobby.players.find(p => p.id === info.playerId);
-              if (recheckPlayer && !recheckPlayer.isConnected) {
-                // Clean them up fully if they didn't reconnect
-                const pIdx = recheckLobby.players.findIndex(p => p.id === info.playerId);
-                if (pIdx !== -1) {
-                  recheckLobby.players.splice(pIdx, 1);
-                  addLobbyLog(recheckLobby, `${recheckPlayer.name} connection grace period expired. Left lobby.`);
-                  if (recheckLobby.players.length === 0) {
-                    await deleteLobby(recheckLobby.id);
-                    console.log(`Lobby ${recheckLobby.id} cleared - no players remaining.`);
-                  } else {
-                    if (recheckLobby.players.length > 0) {
-                      recheckLobby.players[0].isHost = true;
-                    }
-                    await setLobby(recheckLobby.id, recheckLobby);
-                    broadcastLobbyState(recheckLobby, wss);
-                  }
-                }
-              }
-            }
-          }, 10000);
-        }
+        await removePlayerFromLobby(lobby, info.playerId, "disconnected");
         broadcastLobbyState(lobby, wss);
       }
       clientLobbies.delete(ws);
